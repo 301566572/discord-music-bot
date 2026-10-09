@@ -1,0 +1,17 @@
+# Secrets and user-specific runtime data
+.env
+cookies/
+data/
+
+# Virtual environments and Python caches
+.venv/
+.venv-broken-*/
+__pycache__/
+*.py[cod]
+
+# Local logs and editor/OS metadata
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
