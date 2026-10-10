@@ -58,22 +58,11 @@
     }
 
     .record-mark {
-      position: relative;
       width: 42px;
       height: 42px;
       flex: 0 0 42px;
-      border: 8px solid #17365f;
-      border-radius: 50%;
-      background: #9fd6ff;
-      box-shadow: 0 0 0 1px #8bb7dd;
-    }
-
-    .record-mark::after {
-      content: "";
-      position: absolute;
-      inset: 8px;
-      border-radius: 50%;
-      background: var(--coral);
+      display: block;
+      object-fit: contain;
     }
 
     .brand strong { display: block; font-size: 17px; }
@@ -375,7 +364,7 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <div class="record-mark" aria-hidden="true"></div>
+        <img class="record-mark" src="assets/rem-radio-icon.png" alt="" aria-hidden="true">
         <div><strong>小小电台</strong><span>Discord Music Bot</span></div>
       </div>
       <div class="nav-label">帮助目录</div>
