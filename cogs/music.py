@@ -29,6 +29,7 @@ from cogs.playlist_parsers import (
 from cogs.services.cookies import parse_netscape_cookie_file
 from cogs.services.cookies import replace_cookie_file, validate_bili_cookie_text
 from cogs.services.media_search import extract_first
+from cogs.services.lyrics import clean_lyric_text, fetch_lrclib_lyrics
 from cogs.services.netease import fetch_playlist as fetch_netease_playlist
 from cogs.services.http import request_json
 from cogs.services.bilibili import (
@@ -380,11 +381,8 @@ class Music(commands.Cog, name="🎵 音乐"):
         self, query: str, requester_id: int
     ) -> dict | None:
         """Resolve a durable playlist record through the normal player search."""
-        bili_mode = self._is_bili_url(query)
-        info = await self._search(
-            query,
-            bili_mode=bili_mode,
-            user_id=requester_id if bili_mode else None,
+        info, is_bili, _ = await self._search_music_sources(
+            query, user_id=requester_id
         )
         if not info:
             return None
@@ -395,7 +393,7 @@ class Music(commands.Cog, name="🎵 音乐"):
             "webpage_url": webpage_url,
             "duration": info.get("duration", 0),
             "thumbnail": info.get("thumbnail", ""),
-            "is_bili": bili_mode or self._is_bili_url(webpage_url),
+            "is_bili": is_bili or self._is_bili_url(webpage_url),
             "search_query": webpage_url or query,
         }
 
@@ -429,6 +427,31 @@ class Music(commands.Cog, name="🎵 音乐"):
         except Exception as e:
             print(f"搜索出错: {e}")
             return None
+
+    async def _search_music_sources(
+        self,
+        query: str,
+        *,
+        user_id: int | None = None,
+        prefer_bili: bool = False,
+    ) -> tuple[dict | None, bool, str]:
+        """Resolve a URL or search keywords with bounded source fallback."""
+        is_url = query.strip().startswith(("http://", "https://"))
+        if self._is_bili_url(query):
+            info = await self._search(query, bili_mode=True, user_id=user_id)
+            return info, True, "B站"
+        if is_url:
+            info = await self._search(query)
+            return info, False, "链接"
+        if prefer_bili:
+            info = await self._search(query, bili_mode=True, user_id=user_id)
+            return info, True, "B站"
+
+        info = await self._search(query)
+        if info:
+            return info, False, "YouTube"
+        info = await self._search(query, bili_mode=True, user_id=user_id)
+        return info, bool(info), "B站" if info else "YouTube / B站"
 
     def _create_source(
         self, song: Song, player: MusicPlayer
@@ -564,12 +587,13 @@ class Music(commands.Cog, name="🎵 音乐"):
             if not song.is_resolved:
                 await ctx.send(f"🔍 正在搜索: **{song.title}**")
                 requester_id = getattr(song.requester, "id", None)
-                info = await self._search(
+                info, resolved_bili, _ = await self._search_music_sources(
                     song.search_query or song.title,
-                    bili_mode=song.is_bili,
                     user_id=requester_id,
+                    prefer_bili=song.is_bili,
                 )
                 if info:
+                    song.is_bili = resolved_bili
                     song.source_url = info.get("url")
                     song.webpage_url = info.get("webpage_url", "")
                     song.duration = info.get("duration", 0)
@@ -786,7 +810,7 @@ class Music(commands.Cog, name="🎵 音乐"):
 
         # 用户直接输入的搜索词不做清洗，原样传给搜索引擎
         # 清洗只用于歌词搜索（从B站标题自动提取歌名）
-        source_label = "B站" if bili_mode else "YouTube"
+        source_label = "B站" if bili_mode else "YouTube / B站"
         is_url = query.strip().startswith(("http://", "https://"))
 
         async with ctx.typing():
@@ -797,8 +821,13 @@ class Music(commands.Cog, name="🎵 音乐"):
                     f"🔍 正在从 {source_label} 搜索: **{query}**\n"
                     f"💡 *关键词搜索可能不够精准，如需准确匹配请直接粘贴视频链接*"
                 )
-            user_id = ctx.author.id if bili_mode else None
-            info = await self._search(query, bili_mode=bili_mode, user_id=user_id)
+            info, resolved_bili, resolved_source = (
+                await self._search_music_sources(
+                    query,
+                    user_id=ctx.author.id,
+                    prefer_bili=bili_mode,
+                )
+            )
             if not info:
                 return await ctx.send(
                     f"❌ 在 {source_label} 找不到相关音乐，请换个关键词试试。\n"
@@ -812,8 +841,11 @@ class Music(commands.Cog, name="🎵 音乐"):
                 duration=info.get("duration", 0),
                 thumbnail=info.get("thumbnail", ""),
                 requester=ctx.author,
-                is_bili=bili_mode,
+                is_bili=resolved_bili,
             )
+
+            if not is_url and not bili_mode and resolved_source == "B站":
+                await ctx.send("💡 YouTube 未找到结果，已自动切换到 B站音源。")
 
             if vc.is_playing() or vc.is_paused():
                 player.queue.append(song)
@@ -829,7 +861,7 @@ class Music(commands.Cog, name="🎵 音乐"):
     @commands.hybrid_command(
         name="播放",
         aliases=["play", "p", "放歌", "来一首", "点歌", "听"],
-        help="播放音乐 (YouTube/B站URL 或搜索YouTube)",
+        help="播放音乐 (关键词自动尝试 YouTube 和 B站)",
     )
     @app_commands.describe(query="搜索关键词或视频链接")
     @_ensure_voice()
@@ -890,7 +922,9 @@ class Music(commands.Cog, name="🎵 音乐"):
             )
 
             # 第一首立即搜索并播放
-            first_info = await self._search(songs[0]["query"])
+            first_info, first_is_bili, _ = await self._search_music_sources(
+                songs[0]["query"], user_id=ctx.author.id
+            )
             if first_info:
                 first_song = Song(
                     source_url=first_info.get("url"),
@@ -899,6 +933,7 @@ class Music(commands.Cog, name="🎵 音乐"):
                     duration=first_info.get("duration", 0),
                     thumbnail=first_info.get("thumbnail", ""),
                     requester=ctx.author,
+                    is_bili=first_is_bili,
                 )
                 if vc.is_playing() or vc.is_paused():
                     player.queue.append(first_song)
@@ -1918,15 +1953,17 @@ class Music(commands.Cog, name="🎵 音乐"):
         await self._apply_filter(ctx, None)
 
     # ═══════════════════════════════════════
-    # 歌词显示 (QQ Music 歌词源)
+    # 歌词显示 (QQ Music + LRCLIB 回退)
     # ═══════════════════════════════════════
 
     @staticmethod
-    async def _fetch_lyrics(keyword: str) -> tuple[str, str, str] | None:
+    async def _fetch_qq_lyrics(
+        keyword: str,
+    ) -> tuple[str, str, str, str] | None:
         """
         通过 QQ Music 搜索歌曲并获取歌词。
         QQ Music 搜索更精准（第一个结果通常就是原唱），歌词库也更全。
-        返回 (歌名, 歌手, 歌词文本) 或 None
+        返回 (歌名, 歌手, 歌词文本, 来源) 或 None
         """
         loop = asyncio.get_event_loop()
 
@@ -2071,17 +2108,9 @@ class Music(commands.Cog, name="🎵 音乐"):
                 if not raw_lrc:
                     continue
 
-                # 解析 LRC: 去 HTML 标签、时间标签、元信息标签
-                raw_lrc = re.sub(r"<[^>]+>", "", raw_lrc)
-                lines = []
-                for line in raw_lrc.split("\n"):
-                    text = re.sub(r"\[[\d:.]+\]", "", line).strip()
-                    text = re.sub(r"\[[a-z]+:.*?\]", "", text).strip()
-                    if text:
-                        lines.append(text)
-
-                if lines:
-                    return song_name, artist_display, "\n".join(lines)
+                lyric_text = clean_lyric_text(raw_lrc)
+                if lyric_text:
+                    return song_name, artist_display, lyric_text, "QQ音乐"
 
             return None
 
@@ -2090,6 +2119,15 @@ class Music(commands.Cog, name="🎵 音乐"):
         except Exception as e:
             print(f"歌词搜索出错: {e}")
             return None
+
+    async def _fetch_lyrics(
+        self, keyword: str
+    ) -> tuple[str, str, str, str] | None:
+        """Search QQ Music first, then use LRCLIB as a fallback."""
+        result = await self._fetch_qq_lyrics(keyword)
+        if result:
+            return result
+        return await fetch_lrclib_lyrics(keyword)
 
     @staticmethod
     def _extract_lyrics_candidates(title: str) -> list[str]:
@@ -2234,7 +2272,7 @@ class Music(commands.Cog, name="🎵 音乐"):
 
     async def _find_lyrics_for_title(
         self, title: str
-    ) -> tuple[str, str, str] | None:
+    ) -> tuple[str, str, str, str] | None:
         """Try cleaned title candidates until a matching lyric is found."""
         for candidate in self._extract_lyrics_candidates(title):
             cleaned = re.sub(r"[^\w\u4e00-\u9fff]", "", candidate)
@@ -2247,9 +2285,9 @@ class Music(commands.Cog, name="🎵 音乐"):
 
     @staticmethod
     def _create_lyrics_embed(
-        result: tuple[str, str, str], *, automatic: bool = False
+        result: tuple[str, str, str, str], *, automatic: bool = False
     ) -> discord.Embed:
-        song_name, artists, lyric_text = result
+        song_name, artists, lyric_text, source = result
         embed = discord.Embed(
             title=f"🎤 {song_name}",
             description=(
@@ -2260,7 +2298,7 @@ class Music(commands.Cog, name="🎵 音乐"):
             color=discord.Color.gold(),
         )
         embed.set_author(name=artists)
-        footer = "歌词来源: QQ音乐"
+        footer = f"歌词来源: {source}"
         if automatic:
             footer += " · 自动歌词"
         embed.set_footer(text=footer)
@@ -2338,7 +2376,7 @@ class Music(commands.Cog, name="🎵 音乐"):
                     f"❌ 未能找到匹配的歌词\n"
                     f"当前播放: **{raw_title}**\n\n"
                     "可能原因:\n"
-                    "• 这首歌是B站原创/二创内容，网易云没有收录\n"
+                    "• 这首歌是原创/二创内容，当前歌词源均未收录\n"
                     "• 标题中的歌名格式无法自动识别\n\n"
                     "你可以手动指定歌名: `！歌词 <歌名>`"
                 )

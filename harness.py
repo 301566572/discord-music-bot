@@ -22,6 +22,11 @@ from cogs.services.cookies import parse_netscape_cookie_file
 from cogs.services.cookies import replace_cookie_file, validate_bili_cookie_text
 from cogs.services.diagnostics import format_checks
 from cogs.services.http import request_json
+from cogs.services.lyrics import (
+    clean_lyric_text,
+    fetch_lrclib_lyrics,
+    lrclib_record_to_result,
+)
 from cogs.services.netease import track_to_song
 from cogs.services.bilibili import archive_to_entry
 import cogs.services.queue_snapshot as queue_snapshot
@@ -213,6 +218,91 @@ class LyricsHarness(unittest.TestCase):
             extract_lyrics_candidates("【AI东雪莲】《大雨还在下》")[0],
             "大雨还在下",
         )
+
+    def test_lrc_cleanup_and_lrclib_normalization(self):
+        self.assertEqual(
+            clean_lyric_text("[ar:测试]\n[00:01.00]第一句\n[00:02.50]第二句"),
+            "第一句\n第二句",
+        )
+        result = lrclib_record_to_result({
+            "trackName": "测试歌曲",
+            "artistName": "测试歌手",
+            "syncedLyrics": "[00:01.00]测试歌词",
+        })
+        self.assertEqual(
+            result,
+            ("测试歌曲", "测试歌手", "测试歌词", "LRCLIB"),
+        )
+
+
+class LyricsProviderHarness(unittest.IsolatedAsyncioTestCase):
+    async def test_lrclib_fetcher_uses_first_usable_result(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return [
+                    {"instrumental": True},
+                    {
+                        "trackName": "稻香",
+                        "artistName": "周杰伦",
+                        "plainLyrics": "对这个世界如果你有太多的抱怨",
+                    },
+                ]
+
+        def requester(method, url, **kwargs):
+            self.assertEqual(kwargs["params"], {"q": "稻香 周杰伦"})
+            self.assertIn("discord-music-bot", kwargs["headers"]["User-Agent"])
+            return FakeResponse()
+
+        result = await fetch_lrclib_lyrics(
+            "稻香 周杰伦", requester=requester
+        )
+        self.assertEqual(result[0], "稻香")
+        self.assertEqual(result[3], "LRCLIB")
+
+
+class MultiSourceSearchHarness(unittest.IsolatedAsyncioTestCase):
+    async def test_song_search_falls_back_from_youtube_to_bilibili(self):
+        from cogs.music import Music
+
+        music = Music(SimpleNamespace())
+        calls = []
+
+        async def search(query, bili_mode=False, user_id=None):
+            calls.append((query, bili_mode, user_id))
+            if bili_mode:
+                return {"url": "https://audio.invalid/bili"}
+            return None
+
+        music._search = search
+        info, is_bili, source = await music._search_music_sources(
+            "冷门歌曲", user_id=7
+        )
+        self.assertEqual(info["url"], "https://audio.invalid/bili")
+        self.assertTrue(is_bili)
+        self.assertEqual(source, "B站")
+        self.assertEqual(
+            calls,
+            [("冷门歌曲", False, None), ("冷门歌曲", True, 7)],
+        )
+
+    async def test_explicit_bilibili_search_does_not_try_youtube(self):
+        from cogs.music import Music
+
+        music = Music(SimpleNamespace())
+        calls = []
+
+        async def search(query, bili_mode=False, user_id=None):
+            calls.append((query, bili_mode, user_id))
+            return None
+
+        music._search = search
+        await music._search_music_sources(
+            "只搜B站", user_id=8, prefer_bili=True
+        )
+        self.assertEqual(calls, [("只搜B站", True, 8)])
 
 
 class GameLogicHarness(unittest.TestCase):

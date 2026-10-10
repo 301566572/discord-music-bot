@@ -12,8 +12,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-HELP_FILE = Path(__file__).resolve().parent / "help" / "index.html"
-HELP_URL = os.getenv("HELP_URL", "").strip()
+HELP_FILE = Path(__file__).resolve().parent / "docs" / "index.html"
+DEFAULT_HELP_URL = "https://301566572.github.io/discord-music-bot/"
+HELP_URL = (os.getenv("HELP_URL") or DEFAULT_HELP_URL).strip()
 
 # ─── Bot 配置 ───
 intents = discord.Intents.default()

@@ -13,7 +13,7 @@ from tkinter import messagebox, scrolledtext
 PROJECT_DIR = Path(__file__).resolve().parent
 BOT_FILE = PROJECT_DIR / "bot.py"
 ICON_FILE = PROJECT_DIR / "assets" / "app-icon.ico"
-HELP_FILE = PROJECT_DIR / "help" / "index.html"
+HELP_FILE = PROJECT_DIR / "docs" / "index.html"
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 CREATE_NEW_PROCESS_GROUP = 0x00000200 if os.name == "nt" else 0
 

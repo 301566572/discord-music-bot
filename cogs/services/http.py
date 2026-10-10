@@ -12,7 +12,7 @@ def request_json(
     retries: int = 2,
     requester: Callable[..., Any] | None = None,
     **kwargs,
-) -> dict:
+) -> Any:
     """Request JSON with a bounded retry loop."""
     if requester is None:
         import requests

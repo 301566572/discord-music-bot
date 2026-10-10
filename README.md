@@ -8,7 +8,7 @@
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
-| `！播放 <关键词/URL>` | `！play`, `！放歌`, `！来一首`, `！点歌`, `！听` | 播放音乐 (YouTube搜索/YouTube&B站URL) |
+| `！播放 <关键词/URL>` | `！play`, `！放歌`, `！来一首`, `！点歌`, `！听` | 搜索播放；YouTube 未命中时自动尝试 B站 |
 | `！b站 <关键词/URL>` | `！bplay`, `！哔哩哔哩`, `！b站播放` | 从B站搜索并播放音乐 |
 | `！网易云 <歌单链接/ID>` | `！netease`, `！网易云歌单`, `！歌单播放` | 播放网易云音乐歌单 |
 | `！收藏 <B站收藏夹链接>` | `！b站收藏`, `！收藏夹`, `！fav` | 播放B站收藏夹 |
@@ -28,7 +28,7 @@
 | `！保存歌单 <名称>` | `！savequeue`, `！保存队列` | 把当前队列永久保存为本地歌单 |
 | `！播放歌单 <名称>` | `！playqueue`, `！播放队列` | 读取本地歌单并加入播放队列 |
 | `！自动歌词 [开/关]` | `！autolyrics`, `！歌词开关` | 控制换歌时是否自动显示歌词 |
-| `！歌词 [关键词]` | `！lyrics`, `！lrc`, `！词` | 显示当前歌曲或指定歌曲的歌词 |
+| `！歌词 [关键词]` | `！lyrics`, `！lrc`, `！词` | 显示歌词；QQ音乐未命中时自动尝试 LRCLIB |
 | `！上传队列 <名称>` | `！uploadqueue`, `！上传歌单` | 上传 JSON 附件并保存到本地队列库 |
 | `！删除歌单 <名称>` | `！deletequeue`, `！删除队列` | 删除本地命名歌单 |
 | `！导入队列 [名称]` | `！importqueue`, `！队列导入`, `！恢复队列` | 从 JSON 附件导入队列；填名称时保存到本地队列库 |
@@ -45,19 +45,23 @@
 | `！猜歌 [轮数] [难度]` | `！guess`, `！猜歌游戏` | 开始猜歌；优先使用 B站音源，难度为 0-3 |
 | `！猜歌分数` | `！gamescore`, `！猜歌排行` | 查看当前猜歌积分 |
 | `！结束猜歌` | `！stopgame`, `！游戏结束` | 提前结束并恢复猜歌前的播放队列 |
-| `！帮助网页` | `！webhelp`, `！帮助中心` | 下载带图示、工作流、搜索和翻页的单文件 HTML 帮助中心 |
+| `！帮助网页` | `！webhelp`, `！帮助中心` | 打开带图示、工作流、搜索和翻页的在线帮助中心 |
 
 > 中文 `！` 和英文 `!` 都可以用，两种感叹号都识别。
 
 `！帮助` 只显示最常用的基础操作，让 Discord 内的帮助界面保持简洁；高级播放控制、导入导出、滤镜、Cookie 和维护命令统一放在 `！帮助网页` 中。
 
-如已将 `help/index.html` 部署到公网静态网站，可在 `.env` 设置：
+帮助中心通过 GitHub Pages 公开访问：
+
+[打开小小电台帮助中心](https://301566572.github.io/discord-music-bot/)
+
+需要部署到其他地址时，可在 `.env` 覆盖：
 
 ```env
-HELP_URL=https://你的帮助页面地址
+HELP_URL=https://你的帮助页面地址/
 ```
 
-配置后，`！帮助` 和 `！帮助网页` 都会显示可直接打开的链接按钮；未配置时机器人继续发送自包含的 HTML 文件。
+`！帮助` 和 `！帮助网页` 都会显示可直接打开的链接按钮；本地自包含页面位于 `docs/index.html`。
 
 创建并播放带自动歌词的歌单:
 
@@ -161,7 +165,7 @@ start_bot_ui.vbs
 ## 使用示例
 
 ```
-！播放 周杰伦 稻香          # YouTube搜索并播放
+！播放 周杰伦 稻香          # YouTube 未命中时自动尝试 B站
 ！播放 https://youtube.com/watch?v=xxx  # 直接播放YouTube链接
 ！播放 https://www.bilibili.com/video/BVxxx  # 直接播放B站链接
 ！b站 稻香                  # 从B站搜索并播放
@@ -188,6 +192,9 @@ discord-music-bot/
 ├── harness.py          # 离线逻辑验证 harness
 ├── HARNESS.md          # harness 说明和扩展规则
 ├── IMPROVEMENT_PLAN.md # 后续改进计划
+├── CHANGELOG.md        # 按日期记录功能与修复
+├── docs/
+│   └── index.html      # GitHub Pages 图文帮助中心
 ├── data/
 │   └── queues/         # 本地命名队列库，按服务器ID分目录保存
 ├── cogs/
@@ -198,7 +205,7 @@ discord-music-bot/
 │   ├── lyrics_utils.py # 歌词搜索候选词提取
 │   ├── music.py        # 音乐功能命令
 │   ├── playlist_parsers.py # 歌单/链接解析工具
-│   └── services/       # HTTP、yt-dlp、网易云、cookies、诊断等共享服务
+│   └── services/       # HTTP、音源、歌词、网易云、cookies 等共享服务
 ├── requirements.txt    # Python 依赖
 ├── .env.example        # 环境变量模板
 └── README.md           # 本文件
@@ -212,7 +219,7 @@ discord-music-bot/
 python harness.py
 ```
 
-该 harness 覆盖 B站/网易云链接解析、歌词候选词提取、猜歌答案匹配、cookie 解析、诊断格式化、HTTP helper 注入、网易云歌曲结构归一化、B站条目归一化、队列快照校验、命名队列存储等纯逻辑。
+该 harness 现有 31 项检查，覆盖 B站/网易云链接解析、多音源搜索回退、歌词候选词与 LRCLIB 归一化、猜歌答案匹配、cookie 解析、诊断格式化、HTTP helper 注入、队列快照校验和命名队列存储等逻辑。
 更多说明见 `HARNESS.md`。
 
 ---
