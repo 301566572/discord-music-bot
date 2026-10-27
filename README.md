@@ -105,7 +105,7 @@ HELP_URL=https://你的帮助页面地址/
 ### 2. 安装依赖
 
 **前置要求:**
-- Python 3.10+
+- Python 3.11+
 - FFmpeg（音频处理必须）
 
 ```bash
@@ -219,7 +219,7 @@ discord-music-bot/
 python harness.py
 ```
 
-该 harness 现有 31 项检查，覆盖 B站/网易云链接解析、多音源搜索回退、歌词候选词与 LRCLIB 归一化、猜歌答案匹配、cookie 解析、诊断格式化、HTTP helper 注入、队列快照校验和命名队列存储等逻辑。
+该 harness 现有 37 项检查，覆盖 B站/网易云链接解析、多音源搜索回退、歌词候选词与 LRCLIB 归一化、猜歌答案匹配、cookie 解析、诊断格式化、HTTP helper 注入、队列快照校验和命名队列存储等逻辑。
 更多说明见 `HARNESS.md`。
 
 ---
@@ -241,6 +241,8 @@ python harness.py
 ---
 
 ## Cookies 设置（可选，用于B站收藏夹）
+
+公开 B站 BV/av 视频直链默认支持免 Cookie 播放。网页解析失败时会自动尝试公开音频接口；支持 `?p=2` 等分P参数。Cookie 为可选功能，登录、付费、地区限制或风控仍可能使视频无法播放。`cookies/` 不需要从他人电脑复制。
 
 **每个用户可以绑定自己的B站账号**，互不影响。
 

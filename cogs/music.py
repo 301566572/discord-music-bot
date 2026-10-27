@@ -829,6 +829,14 @@ class Music(commands.Cog, name="🎵 音乐"):
                 )
             )
             if not info:
+                if is_url and self._is_bili_url(query):
+                    return await ctx.send(
+                        "❌ B站视频链接解析失败，暂时无法获取音频。\n"
+                        "可能是 B站风控、登录状态失效或视频访问限制。\n"
+                        "已尝试公开视频接口；请先在浏览器确认视频可播放，稍后重试。\n"
+                        "公开链接通常无需 Cookie；需要登录的视频可选用 "
+                        "`！绑定b站` 上传自己的 cookies.txt。"
+                    )
                 return await ctx.send(
                     f"❌ 在 {source_label} 找不到相关音乐，请换个关键词试试。\n"
                     f"💡 建议直接粘贴视频链接，搜索结果更准确"

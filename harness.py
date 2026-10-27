@@ -263,7 +263,86 @@ class LyricsProviderHarness(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[3], "LRCLIB")
 
 
+class AnonymousBiliHarness(unittest.TestCase):
+    def test_only_public_video_hosts_are_accepted(self):
+        from cogs.services.bili_audio import public_video_query
+        self.assertEqual(public_video_query("https://www.bilibili.com/video/BV12L3x67ECs/?p=2"), {"bvid": "BV12L3x67ECs"})
+        self.assertEqual(public_video_query("https://bilibili.com/video/av123"), {"aid": "123"})
+        self.assertIsNone(public_video_query("https://bilibili.com.example.org/video/BV123"))
+        self.assertIsNone(public_video_query("https://example.org/video/BV123"))
+
+    def _resolve(self, *, page="2", play_code=0, audio=True):
+        from cogs.services.bili_audio import fetch_public_audio
+        calls = []
+        class Response:
+            def __init__(self, value): self.value = value
+            def raise_for_status(self): pass
+            def json(self): return self.value
+        def requester(method, url, **kwargs):
+            self.assertNotIn("cookies", kwargs)
+            self.assertNotIn("Cookie", kwargs["headers"])
+            calls.append(kwargs["params"])
+            if url.endswith("/view"):
+                return Response({"code": 0, "data": {
+                    "bvid": "BV123", "title": "测试视频", "duration": 100,
+                    "pages": [{"cid": 1, "duration": 40}, {"cid": 2, "duration": 60}],
+                }})
+            return Response({"code": play_code, "data": {"dash": {"audio": [
+                {"baseUrl": "https://audio.invalid/low", "bandwidth": 1},
+                {"base_url": "https://audio.invalid/high", "bandwidth": 2},
+            ] if audio else []}}})
+        result = fetch_public_audio(f"https://www.bilibili.com/video/BV123/?p={page}", requester=requester)
+        return result, calls
+
+    def test_anonymous_audio_selects_page_and_best_stream(self):
+        result, calls = self._resolve()
+        self.assertEqual(calls[1]["cid"], 2)
+        self.assertEqual(result["duration"], 60)
+        self.assertEqual(result["url"], "https://audio.invalid/high")
+
+    def test_restricted_video_and_missing_audio_fail_cleanly(self):
+        with self.assertRaises(ValueError): self._resolve(play_code=-403)
+        with self.assertRaises(ValueError): self._resolve(audio=False)
+
+    def test_invalid_page_is_not_silently_replaced(self):
+        for page in ("0", "3", "bad"):
+            with self.assertRaises(ValueError): self._resolve(page=page)
+
+
+class AnonymousBiliFallbackHarness(unittest.IsolatedAsyncioTestCase):
+    async def test_extractor_failure_uses_anonymous_fallback(self):
+        from unittest.mock import patch
+        from cogs.services.media_search import extract_first
+        from yt_dlp.utils import DownloadError
+        with patch("cogs.services.media_search.yt_dlp.YoutubeDL") as ydl, patch(
+            "cogs.services.media_search.fetch_public_audio", return_value={"url": "audio"}
+        ) as fallback:
+            ydl.return_value.__enter__.return_value.extract_info.side_effect = DownloadError("initial state")
+            result = await extract_first("https://www.bilibili.com/video/BV123/", {})
+            self.assertEqual(result, {"url": "audio"})
+            fallback.assert_called_once_with("https://www.bilibili.com/video/BV123/")
+
+
 class MultiSourceSearchHarness(unittest.IsolatedAsyncioTestCase):
+    async def test_bilibili_link_failure_explains_cookie_refresh(self):
+        from cogs.music import Music
+        from unittest.mock import AsyncMock, MagicMock
+
+        music = Music(SimpleNamespace())
+        music._search_music_sources = AsyncMock(return_value=(None, True, "B站"))
+        channel = SimpleNamespace()
+        ctx = SimpleNamespace(
+            guild=SimpleNamespace(id=9),
+            author=SimpleNamespace(id=7, voice=SimpleNamespace(channel=channel)),
+            voice_client=SimpleNamespace(channel=channel),
+            typing=MagicMock(), send=AsyncMock(),
+        )
+        await music._play_song(ctx, "https://www.bilibili.com/video/BV12L3x67ECs/", True)
+        message = ctx.send.call_args.args[0]
+        self.assertIn("链接解析失败", message)
+        self.assertIn("绑定b站", message)
+        self.assertNotIn("换个关键词", message)
+
     async def test_song_search_falls_back_from_youtube_to_bilibili(self):
         from cogs.music import Music
 
