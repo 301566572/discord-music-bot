@@ -263,6 +263,125 @@ class LyricsProviderHarness(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[3], "LRCLIB")
 
 
+class EmptyVoiceChannelHarness(unittest.IsolatedAsyncioTestCase):
+    async def test_background_monitor_starts_and_stops_with_cog(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        music, vc = self.make_music()
+        music.bot.wait_until_ready = AsyncMock()
+        music.EMPTY_CHANNEL_TIMEOUT = 0.02
+        music._watch_empty_channels.change_interval(seconds=0.01)
+        disconnected = asyncio.Event()
+        async def disconnect():
+            vc.connected = False
+            disconnected.set()
+        vc.disconnect.side_effect = disconnect
+        try:
+            await music.cog_load()
+            await asyncio.wait_for(disconnected.wait(), timeout=2)
+            vc.disconnect.assert_awaited_once()
+        finally:
+            await music.cog_unload()
+            await asyncio.sleep(0)
+        self.assertFalse(music._watch_empty_channels.is_running())
+
+    def make_music(self):
+        from cogs.music import Music
+        from unittest.mock import AsyncMock
+
+        channel = SimpleNamespace(id=10, members=[SimpleNamespace(bot=True)])
+        vc = SimpleNamespace(guild=SimpleNamespace(id=9), channel=channel, connected=True)
+        vc.is_connected = lambda: vc.connected
+        async def disconnect():
+            vc.connected = False
+        vc.disconnect = AsyncMock(side_effect=disconnect)
+        bot = SimpleNamespace(voice_clients=[vc], get_cog=lambda name: None)
+        return Music(bot), vc
+
+    async def test_leaves_while_song_and_queue_are_still_pending(self):
+        music, vc = self.make_music()
+        player = music.get_player(9)
+        player.current = "unfinished song"
+        player.queue.append("next song")
+        player.loop = True
+        music.skip_votes[9] = {7}
+        await music._check_empty_channels(now=0)
+        await music._check_empty_channels(now=119)
+        vc.disconnect.assert_not_awaited()
+        await music._check_empty_channels(now=120)
+        vc.disconnect.assert_awaited_once()
+        self.assertIsNone(player.current)
+        self.assertFalse(player.queue)
+        self.assertFalse(player.loop)
+        self.assertNotIn(9, music.skip_votes)
+
+    async def test_human_return_cancels_and_restarts_countdown(self):
+        music, vc = self.make_music()
+        await music._check_empty_channels(now=0)
+        vc.channel.members.append(SimpleNamespace(bot=False))
+        await music.on_voice_state_update(None, None, None)
+        self.assertNotIn(9, music._empty_channels)
+        await music._check_empty_channels(now=500)
+        vc.disconnect.assert_not_awaited()
+        vc.channel.members.pop()
+        await music._check_empty_channels(now=501)
+        await music._check_empty_channels(now=620)
+        vc.disconnect.assert_not_awaited()
+        await music._check_empty_channels(now=621)
+        vc.disconnect.assert_awaited_once()
+
+    async def test_other_bots_do_not_count_as_listeners(self):
+        music, vc = self.make_music()
+        vc.channel.members.append(SimpleNamespace(bot=True))
+        await music._check_empty_channels(now=0)
+        await music._check_empty_channels(now=120)
+        vc.disconnect.assert_awaited_once()
+
+    async def test_channel_move_and_reconnect_start_fresh_timers(self):
+        music, vc = self.make_music()
+        await music._check_empty_channels(now=0)
+        vc.channel = SimpleNamespace(id=11, members=[])
+        await music._check_empty_channels(now=119)
+        await music._check_empty_channels(now=120)
+        vc.disconnect.assert_not_awaited()
+        vc.connected = False
+        await music._check_empty_channels(now=121)
+        self.assertNotIn(9, music._empty_channels)
+        vc.connected = True
+        await music._check_empty_channels(now=240)
+        await music._check_empty_channels(now=359)
+        vc.disconnect.assert_not_awaited()
+        await music._check_empty_channels(now=360)
+        vc.disconnect.assert_awaited_once()
+
+    async def test_empty_exit_cancels_guessing_without_restoring_queue(self):
+        music, vc = self.make_music()
+        game = SimpleNamespace(active=True, saved_music_state={"songs": ["saved"]})
+        games = {9: game}
+        music.bot.get_cog = lambda name: SimpleNamespace(games=games)
+        await music._check_empty_channels(now=0)
+        await music._check_empty_channels(now=120)
+        self.assertFalse(game.active)
+        self.assertIsNone(game.saved_music_state)
+        self.assertNotIn(9, games)
+        vc.disconnect.assert_awaited_once()
+
+    async def test_guilds_have_independent_countdowns(self):
+        from unittest.mock import AsyncMock
+        music, vc = self.make_music()
+        other = SimpleNamespace(
+            guild=SimpleNamespace(id=8),
+            channel=SimpleNamespace(id=20, members=[SimpleNamespace(bot=False)]),
+            is_connected=lambda: True, disconnect=AsyncMock(),
+        )
+        music.bot.voice_clients.append(other)
+        await music._check_empty_channels(now=0)
+        await music._check_empty_channels(now=120)
+        vc.disconnect.assert_awaited_once()
+        other.disconnect.assert_not_awaited()
+
+
 class AnonymousBiliHarness(unittest.TestCase):
     def test_only_public_video_hosts_are_accepted(self):
         from cogs.services.bili_audio import public_video_query

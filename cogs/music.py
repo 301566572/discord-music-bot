@@ -13,7 +13,7 @@ import time
 from collections import deque
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import yt_dlp
 
@@ -303,11 +303,78 @@ class PlaylistPager(discord.ui.View):
 class Music(commands.Cog, name="🎵 音乐"):
     """播放音乐的所有命令"""
 
+    EMPTY_CHANNEL_TIMEOUT = 120
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.players: dict[int, MusicPlayer] = {}
         self.skip_votes: dict[int, set[int]] = {}
         self.playlist_sessions: set[tuple[int, int]] = set()
+        self._empty_channels: dict[int, tuple] = {}
+        self._empty_channel_lock = asyncio.Lock()
+
+    async def cog_load(self):
+        self._watch_empty_channels.start()
+
+    async def cog_unload(self):
+        self._watch_empty_channels.cancel()
+        self._empty_channels.clear()
+
+    @tasks.loop(seconds=10)
+    async def _watch_empty_channels(self):
+        await self._check_empty_channels()
+
+    @_watch_empty_channels.before_loop
+    async def _before_watch_empty_channels(self):
+        await self.bot.wait_until_ready()
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        # Handle returns immediately, including brief visits between polling ticks.
+        await self._check_empty_channels()
+
+    async def _check_empty_channels(self, *, now: float | None = None):
+        """Leave after two continuous minutes without a human listener."""
+        async with self._empty_channel_lock:
+            timestamp = time.monotonic() if now is None else now
+            clients = list(self.bot.voice_clients)
+            connected_ids = {vc.guild.id for vc in clients if vc.is_connected()}
+            for guild_id in list(self._empty_channels):
+                if guild_id not in connected_ids:
+                    self._empty_channels.pop(guild_id, None)
+            for vc in clients:
+                guild_id = vc.guild.id
+                channel = vc.channel
+                if not vc.is_connected() or channel is None:
+                    continue
+                if any(not member.bot for member in channel.members):
+                    self._empty_channels.pop(guild_id, None)
+                    continue
+                previous = self._empty_channels.get(guild_id)
+                if previous is None or previous[0] is not vc or previous[1] != channel.id:
+                    self._empty_channels[guild_id] = (vc, channel.id, timestamp)
+                    continue
+                if timestamp - previous[2] < self.EMPTY_CHANNEL_TIMEOUT:
+                    continue
+
+                # Prevent the music callback or an active guessing game from resuming.
+                game_cog = self.bot.get_cog("🎮 猜歌游戏")
+                if game_cog:
+                    game = game_cog.games.pop(guild_id, None)
+                    if game:
+                        game.active = False
+                        game.saved_music_state = None
+                player = self.get_player(guild_id)
+                player.clear()
+                player.external_control = True
+                self.skip_votes.pop(guild_id, None)
+                try:
+                    await vc.disconnect()
+                except Exception as exc:
+                    print(f"无人频道退出失败: {type(exc).__name__}")
+                finally:
+                    player.external_control = False
+                    self._empty_channels.pop(guild_id, None)
 
     def get_player(self, guild_id: int) -> MusicPlayer:
         if guild_id not in self.players:

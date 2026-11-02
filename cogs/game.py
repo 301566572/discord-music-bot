@@ -326,6 +326,8 @@ class MusicGame(commands.Cog, name="🎮 猜歌游戏"):
             info, is_bili = await self._search_song(
                 query, user_id=ctx.author.id
             )
+            if not game.active or not vc.is_connected():
+                break
             if not info:
                 await ctx.send(
                     "⚠️ B站和备用音源都无法加载这首歌，跳到下一轮。\n"
@@ -358,6 +360,8 @@ class MusicGame(commands.Cog, name="🎮 猜歌游戏"):
                 info, is_bili = await self._search_song(
                     query, user_id=ctx.author.id, skip_bili=True
                 )
+                if not game.active or not vc.is_connected():
+                    break
                 audio_url = info.get("url") if info else None
                 start_offset, duration = calculate_clip_window(
                     info.get("duration") if info else None,
