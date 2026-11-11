@@ -23,6 +23,7 @@ intents.voice_states = True
 
 bot = commands.Bot(
     command_prefix=["！", "!"],  # 同时支持中文！和英文!
+    strip_after_prefix=True,
     intents=intents,
     description="🎵 Discord 音乐机器人",
     help_command=None,

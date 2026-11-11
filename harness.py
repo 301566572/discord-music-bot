@@ -82,6 +82,43 @@ class BotCommandHarness(unittest.TestCase):
             bot_module.HELP_URL = original
 
 
+class CommandParsingHarness(unittest.IsolatedAsyncioTestCase):
+    async def test_chinese_and_english_prefixes_accept_spaces(self):
+        import bot as bot_module
+        from unittest.mock import patch
+        bot = bot_module.bot
+        with patch.object(bot._connection, "user", SimpleNamespace(id=999)):
+            for text in ("!帮助", "！帮助", "! 帮助", "！ 帮助", "!　帮助", "!   help"):
+                message = SimpleNamespace(content=text, author=SimpleNamespace(id=7), _state=bot._connection)
+                ctx = await bot.get_context(message)
+                self.assertIs(ctx.command, bot.get_command("帮助"), text)
+
+
+class VoiceDiagnosticsHarness(unittest.TestCase):
+    def test_detects_muted_zero_volume_and_missing_speak_permission(self):
+        from cogs.services.diagnostics import voice_checks
+        vc = SimpleNamespace(
+            is_connected=lambda: True, is_playing=lambda: True, is_paused=lambda: False,
+            guild=SimpleNamespace(me=SimpleNamespace(voice=SimpleNamespace(mute=True, suppress=False))),
+            channel=SimpleNamespace(permissions_for=lambda me: SimpleNamespace(speak=False)),
+        )
+        checks = {name: ok for name, ok, detail in voice_checks(vc, SimpleNamespace(volume=0))}
+        self.assertFalse(checks["播放器音量"])
+        self.assertFalse(checks["服务器语音状态"])
+        self.assertFalse(checks["频道发言权限"])
+        self.assertTrue(checks["语音连接"])
+
+    def test_no_connection_and_healthy_connection(self):
+        from cogs.services.diagnostics import voice_checks
+        self.assertFalse(voice_checks(None)[0][1])
+        vc = SimpleNamespace(
+            is_connected=lambda: True, is_playing=lambda: True, is_paused=lambda: False,
+            guild=SimpleNamespace(me=SimpleNamespace(voice=SimpleNamespace(mute=False, suppress=False))),
+            channel=SimpleNamespace(permissions_for=lambda me: SimpleNamespace(speak=True)),
+        )
+        self.assertTrue(all(ok for _, ok, _ in voice_checks(vc, SimpleNamespace(volume=.5))))
+
+
 class PlaylistConversationHarness(unittest.IsolatedAsyncioTestCase):
     async def test_interactive_playlist_creation(self):
         from cogs.music import Music

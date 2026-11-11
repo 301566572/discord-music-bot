@@ -2,7 +2,7 @@
 import discord
 from discord.ext import commands
 
-from cogs.services.diagnostics import check_runtime_environment, format_checks
+from cogs.services.diagnostics import check_runtime_environment, format_checks, voice_checks
 
 
 class Diagnostics(commands.Cog, name="🛠️ 诊断"):
@@ -18,6 +18,10 @@ class Diagnostics(commands.Cog, name="🛠️ 诊断"):
     )
     async def diagnose(self, ctx: commands.Context):
         checks = check_runtime_environment()
+        music = self.bot.get_cog("🎵 音乐")
+        player = music.players.get(ctx.guild.id) if music and ctx.guild else None
+        if ctx.guild:
+            checks.extend(voice_checks(ctx.voice_client, player))
         loaded = sorted(self.bot.extensions.keys())
         latency_ms = round(self.bot.latency * 1000)
 
